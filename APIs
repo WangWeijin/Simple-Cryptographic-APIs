@@ -1,0 +1,499 @@
+set interactiveMode = false.
+
+ param N.
+ param N1.
+ param N2.
+ param N3.
+ param qCK.
+ param qCKP.
+ param qK.
+ param qKP.
+ param qWK.
+ param qMK.
+ param qSSK.
+ param qDel.
+ param qD.
+ param qSE.
+ param qSD.
+ param qPE.
+ param qPD.
+ param qW.
+ param qUW.
+ param qSS.
+ param qSV.
+ param qPS.
+ param qPV.
+
+  (* SENC *)
+ type keyseed [large,fixed].
+ type key [bounded].
+ type cleartext [bounded].
+ type ciphertext.
+ type seed [fixed].
+ proba Penc.
+ proba Pencctxt.
+ expand IND_CPA_INT_CTXT_sym_enc(keyseed,key,cleartext,ciphertext,seed,kgen,senc,sdec,injbot,Z,Penc,Pencctxt).
+
+ (* PENC *)
+ type pkey [bounded].
+ type skey [bounded].
+ type pcleartext [bounded].
+ type pciphertext.
+ type pseed [fixed].
+ proba pPenc.
+ proba Penccoll.
+ expand IND_CCA2_public_key_enc(keyseed,pkey,skey,pcleartext,pciphertext,pseed,skgen,pkgen,penc,pdec,pinjbot,PZ,pPenc,Penccoll). 
+
+  (* WRAP *)
+ type wkey [fixed].
+ type wseed [fixed].
+ type wmkey [bounded].
+ type wrap.
+ type label [bounded].
+ proba wPenc.
+ proba wPmac.
+ expand IND_CPA_sym_enc(keyseed,wkey,keyseed,wrap,wseed,wkgen,wenc,wdec,winjbot,WZ,wPenc).
+ expand SUF_CMA_mac(keyseed,wmkey,wrap,label,wmkgen,wmac,wcheck,wPmac). 
+
+  (* SAUTH *)
+ type mkey [bounded].
+ type macinput.
+ type macres [bounded].
+ proba Pmac.
+ expand SUF_CMA_mac(keyseed,mkey,macinput,macres,mkgen,symmac,symverify,Pmac).
+
+ (* PAUTH *)
+ type spkey [bounded].
+ type sskey [bounded].
+ type signinput.
+ type signature [bounded].
+ type sseed [fixed].
+ proba Psign.
+ proba Psigncoll.
+ expand SUF_CMA_signature(keyseed,spkey,sskey,signinput,signature,sseed,sskgen,spkgen,asymsign,asymverify,Psign,Psigncoll).
+
+ (* key type *)
+
+ type keytype [large].
+ const symkey: keytype.
+ const asymkey: keytype.
+ const wrapkey: keytype.
+ const mackey: keytype.
+ const signkey: keytype.
+
+ (* key handle *)
+
+ type handle [fixed,large].
+ table keystruct (handle, keytype, bool, keyseed, keyseed).
+
+
+ (* derived key handle *)
+
+ table Dkeystruct (handle, keytype, bool, keyseed, keyseed).
+
+ (* deleted key table *)
+
+ table Delkey (handle).
+ const success: bitstring.
+
+
+
+ (************************************ key derivation ********************************)
+
+ type schemekey [fixed].
+ type basekey [bounded].
+ proba pPRF.
+ fun F(schemekey, handle, basekey):keyseed.
+
+ equiv kdf(F)
+     foreach i2 <= N2 do z <-R schemekey;
+         foreach i <= N do OKD(x:handle, k:basekey):= return(F(z,x,k))
+       <=(N2*pPRF(time, N))=>
+       foreach i2 <= N2 do
+         foreach i <= N do OKD(x:handle, k:basekey):= 
+	   find u <= N suchthat defined(x[u],k[u],s[u]) && x = x[u] && k = k[u]
+	     then return(s[u])
+	     else s <-R keyseed; return (s).
+ 
+ (********************************* type conversion ***********************************)
+
+ fun keytobasekey(key):basekey [compos].
+ fun mkeytobasekey(mkey):basekey [compos].
+
+ (******************************** Semantic security **********************************)
+ query secret1 b.
+ event forge.
+ query event forge ==> false.
+
+ (******************************** API query **********************************)
+
+ let CreateK =
+     foreach iCK <= qCK do OCK(ktype:keytype):=
+     if ktype = symkey then 
+     (
+     ks' <-R keyseed;
+     k' <- kgen(ks'); 
+     khd' <-R handle;
+     insert keystruct(khd', symkey, true, ks', obfuscation);
+     return (khd')
+     ) 
+     else
+     if ktype = wrapkey then 
+     (
+     wks' <-R keyseed;
+     wk' <- wkgen(wks');
+     wmks' <-R keyseed;
+     wmk' <- wmkgen(wmks');
+     wkhd' <-R handle;
+     insert keystruct(wkhd', wrapkey, true, wks', wmks');
+     return (wkhd')
+     )
+     else
+     if ktype = mackey then 
+     (
+     mks' <-R keyseed;
+     mkhd' <-R handle;
+     insert keystruct(mkhd', mackey, true, mks', obfuscation);
+     return(mkhd')
+     ).
+     
+ let CreateKP =
+     foreach iCKP <= qCKP do OCKP(ktype:keytype):=
+     if ktype = asymkey then 
+     (
+     pks' <-R keyseed;
+     pk' <- pkgen(pks');
+     sk' <- skgen(pks');
+     skhd' <-R handle;
+     insert keystruct(skhd', asymkey, true, pks', obfuscation);
+     return (skhd',pk')
+     )
+     else
+     if ktype = signkey then 
+     (
+     sks' <-R keyseed;
+     spk' <- spkgen(sks');
+     sigkhd' <-R handle;
+     insert keystruct(sigkhd', signkey, true, sks', obfuscation);
+     return(sigkhd',spk')
+     ).
+
+ let Delete =
+     foreach iDel <= qDel do ODel(delhd:handle):=
+     if delhd = khd then end else
+     if delhd = skhd then end else
+     if delhd = wkhd then end else
+     if delhd = mkhd then end else
+     if delhd = sigkhd then end else
+     insert Delkey(delhd);
+     return(success).
+
+ let KDF =
+     foreach iD <= qD do OD(kdhd3:handle):=
+     get Delkey (=kdhd3) in end else
+     dkhd3 <-R handle;
+     get keystruct(=kdhd3, =symkey, IsExtr, kr3, =obfuscation) in
+     (
+       dk3 <- kgen(kr3);
+       let dr3 = F(ck,dkhd3,keytobasekey(dk3)) in
+       insert Dkeystruct(dkhd3, symkey, IsExtr, dr3, obfuscation);
+       return (dkhd3) 
+     )
+     else
+     (
+         get keystruct(=kdhd3, =mackey, IsExtr, kr3, =obfuscation) in
+         dmk3 <- mkgen(kr3);
+         let dr3 = F(ck,dkhd3,mkeytobasekey(dmk3)) in
+         insert Dkeystruct(dkhd3, mackey, IsExtr, dr3, obfuscation);
+         return (dkhd3)
+     ).
+
+ let SENC =
+     foreach iSE <= qSE do OSE(khd3:handle,m3:cleartext):=
+     get Delkey (=khd3) in end else
+     get keystruct(=khd3, =symkey, IsExtr, ks3, =obfuscation) in 
+     (
+     k3 <- kgen(ks3);
+     r3 <-R seed;
+     return(senc(m3,k3,r3)) 
+     )
+     else 
+     (
+     get Dkeystruct(=khd3, =symkey, IsExtr, ks3, =obfuscation) in
+     k3 <- kgen(ks3);
+     r3 <-R seed;
+     return(senc(m3,k3,r3))
+     ).
+ 
+ let SDEC =
+     foreach iSD <= qSD do OSD(khd4:handle,c4:ciphertext):=
+     get Delkey (=khd4) in end else
+     find u <= N suchthat defined(c1[u]) && (c4 = c1[u]) then end else
+     get keystruct(=khd4, =symkey, IsExtr, ks4, =obfuscation) in
+     (
+     k4 <- kgen(ks4);
+     return(sdec(c4,k4))
+     )
+     else
+     (
+     get Dkeystruct(=khd4, =symkey, IsExtr, ks4, =obfuscation) in
+     k4 <- kgen(ks4);
+     return(sdec(c4,k4))
+     ).
+
+ let PENC =
+     foreach iPE <= qPE do OPE(skhd3:handle, pm3:pcleartext):=
+     get Delkey (=skhd3) in end else
+     get keystruct(=skhd3, =asymkey, IsExtr, pks3, =obfuscation) in
+     pk3 <- pkgen(pks3);
+     pr3 <-R pseed;
+     return(penc(pm3,pk3,pr3)).
+
+ let PDEC =
+     foreach iPD <= qPD do OPD(skhd4:handle, pc4:pciphertext):=
+     get Delkey (=skhd4) in end else
+     find u <= N suchthat defined(pc1[u]) && (pc4 = pc1[u]) then end else
+     get keystruct(=skhd4, =asymkey, IsExtr, pks4, =obfuscation) in
+     sk4 <- skgen(pks4);
+     return(pdec(pc4,sk4)).
+
+ let WRAP=
+     foreach iW <= qW do OW(wkhd3:handle, keyhd3:handle):=
+     get Delkey (=wkhd3) in end else
+     get Delkey (=keyhd3) in end else
+     get keystruct(=wkhd3, =wrapkey, IsExtr, wks3, wmks3) in
+     wk3 <- wkgen(wks3);
+     wmk3 <- wmkgen(wmks3);
+     wr3 <-R wseed;
+     get keystruct(=keyhd3, ktype3, =true, kr3, =obfuscation) in
+     (
+     w: wrap <- wenc(kr3,wk3,wr3);
+     l: label <- wmac(w,wmk3);
+     return((w,l))
+     )
+     else
+     (
+     get Dkeystruct(=keyhd3, ktype3, =true, kr3, =obfuscation) in
+     w: wrap <- wenc(kr3,wk3,wr3);
+     l: label <- wmac(w,wmk3);
+     return((w,l))
+     ).
+    
+ 
+ let UNWRAP=
+     foreach iUW <= qUW do OUW(wkhd4:handle, (w':wrap,l':label)):=
+     get Delkey (=wkhd4) in end else
+     find u1 <= N suchthat defined(w1[u1],l1[u1]) && (w' = w1[u1]) && (l' = l1[u1]) then end else
+     find u2 <= N suchthat defined(w2[u2],l2[u2]) && (w' = w2[u2]) && (l' = l2[u2]) then end else
+     find u3 <= N suchthat defined(w3[u3],l3[u3]) && (w' = w3[u3]) && (l' = l3[u3]) then end else
+     get keystruct(=wkhd4, =wrapkey, IsExtr, wks4, wmks4) in
+     wk4 <- wkgen(wks4);
+     wmk4 <- wmkgen(wmks4);
+     if wcheck(w', wmk4, l') then
+     let winjbot(kr4) = wdec(w', wk4) in
+     get keystruct(keyhd4, ktype4, =true, =kr4, =obfuscation) in
+     (
+     return(keyhd4)
+     )
+     else
+     (
+     get Dkeystruct(keyhd4, ktype4, =true, =kr4, =obfuscation) in
+     return(keyhd4)
+     ).
+
+ let SYM_MAC =
+     foreach iSS <= qSS do OSS(mkhd3:handle, mm3:macinput):=
+     get Delkey (=mkhd3) in end else
+     get keystruct(=mkhd3, =mackey, IsExtr, mks3, =obfuscation) in
+     (
+       mk3 <- mkgen(mks3);
+       let mm3_mac = symmac(mm3, mk3) in
+       return(mm3, mm3_mac)
+     )
+     else
+     (
+        get Dkeystruct(=mkhd3, =mackey, IsExtr, mks3, =obfuscation) in
+	      mk3 <- mkgen(mks3);
+        let mm3_mac = symmac(mm3, mk3) in
+        return(mm3, mm3_mac)
+     ).
+ 
+ let SYM_VERIFY =
+     foreach iSV <= qSV do OSV(mkhd4:handle, mm4:macinput, mm4_mac:macres):=
+     get Delkey (=mkhd4) in end else
+     get keystruct(=mkhd4, =mackey, IsExtr, mks4, =obfuscation) in
+     (
+       mk4 <- mkgen(mks4);
+       return(symverify(mm4,mk4,mm4_mac))
+     )
+     else
+     (
+       get Dkeystruct(=mkhd4, =mackey, IsExtr, mks4, =obfuscation) in
+       mk4 <- mkgen(mks4);
+       return(symverify(mm4,mk4,mm4_mac))
+     ).
+
+ let ASYM_SIGN =
+     foreach iPS <= qPS do OPS(sigkhd3:handle, sm3:signinput):=
+     get Delkey (=sigkhd3) in end else
+     get keystruct(=sigkhd3, =signkey, IsExtr, sks3, =obfuscation) in
+     ssk3 <- sskgen(sks3);
+     ss3 <-R sseed;
+     let sm3_sign = asymsign(sm3, ssk3, ss3) in
+     return (sm3,sm3_sign).
+
+ let ASYM_VERIFY =
+     foreach iPV <= qPV do OPV(sigkhd4:handle, sm4:signinput, sm4_sign:signature):=
+     get Delkey (=sigkhd4) in end else
+     get keystruct(=sigkhd4, =signkey, IsExtr, sks4, =obfuscation) in
+     spk4 <- spkgen(sks4);
+     return(asymverify(sm4,spk4,sm4_sign)).
+
+ (******************************** security test **********************************)
+
+  let testKDF=
+     OT1(kdhd1:handle, kdhd2:handle) :=
+     get Delkey (=kdhd1) in end else
+     get Delkey (=kdhd2) in end else
+     find uD1 <= qD suchthat defined(kdhd3[uD1]) && (kdhd1 = kdhd3[uD1]) then end else
+     find uD2 <= qD suchthat defined(kdhd3[uD2]) && (kdhd2 = kdhd3[uD2]) then end else
+     get keystruct (=kdhd1, ktype1, IsExtr1, kr1, =obfuscation) in
+     get keystruct (=kdhd2, ktype2, IsExtr2, kr2, =obfuscation) in
+     if ktype1 = ktype2 then
+     dkhd1 <-R handle; 
+     let kr = if b then kr1 else kr2 in
+     let IsExtr = if b then IsExtr1 else IsExtr2 in
+     if ktype1=symkey then
+     (
+       let dr = F(ck, dkhd1, keytobasekey(kgen(kr))) in
+       return(dr)
+     )
+     else
+     (
+       if ktype1=mackey then
+       let dr = F(ck, dkhd1, mkeytobasekey(mkgen(kr))) in
+       return(dr)
+     ).
+
+ let testSENC=
+     OT2(m1:cleartext,m2:cleartext) :=
+     find uSE1 <= qSE suchthat defined(khd3[uSE1],m3[uSE1]) && (khd = khd3[uSE1]) && (m1 = m3[uSE1]) then end else
+     find uSE2 <= qSE suchthat defined(khd3[uSE2],m3[uSE2]) && (khd = khd3[uSE2]) && (m2 = m3[uSE2]) then end else
+     let m = if b then m1 else m2 in
+     get keystruct (=khd, =symkey, IsExtr, ks1, =obfuscation) in
+     k1 <- kgen(ks1);
+     r1 <-R seed;
+     let c1: ciphertext = senc(m,k1,r1) in
+     return (c1).
+
+ let testPENC=
+     OT3(pm1:pcleartext,pm2:pcleartext) :=
+     find uPE1 <= qPE suchthat defined(skhd3[uPE1],pm3[uPE1]) && (skhd = skhd3[uPE1]) && (pm1 = pm3[uPE1]) then end else
+     find uPE2 <= qPE suchthat defined(skhd3[uPE2],pm3[uPE2]) && (skhd = skhd3[uPE2]) && (pm2 = pm3[uPE2]) then end else
+     get keystruct(=skhd, =asymkey, IsExtr, pks1, =obfuscation) in
+     let pm = if b then pm1 else pm2 in
+     pk1 <- pkgen(pks1);
+     pr1 <-R pseed;
+     let pc1: pciphertext = penc(pm,pk1,pr1) in
+     return (pc1).
+
+ let testWRAP1= 
+     OT41(keyhd1:handle, keyhd2:handle) :=
+     get Delkey (=keyhd1) in end else
+     get Delkey (=keyhd2) in end else
+     find uW1 <= qW suchthat defined(wkhd3[uW1],keyhd3[uW1]) && (wkhd = wkhd3[uW1]) && (keyhd1 = keyhd3[uW1]) then end else
+     find uW2 <= qW suchthat defined(wkhd3[uW2],keyhd3[uW2]) && (wkhd = wkhd3[uW2]) && (keyhd2 = keyhd3[uW2]) then end else
+     get keystruct(=keyhd1, ktype1, =true, kr1, =obfuscation) in
+     get keystruct(=keyhd2, ktype2, =true, kr2, =obfuscation) in 
+     if ktype1 = ktype2 then
+     let kr = if b then kr1 else kr2 in 
+     wr <-R wseed;
+     let w1: wrap = wenc(kr,wk,wr) in 
+     let l1: label = wmac(w1,wmk) in
+     return ((w1,l1)).
+
+  let testWRAP2= 
+     OT42(keyhd1:handle, keyhd2:handle) :=
+     get Delkey (=keyhd1) in end else
+     get Delkey (=keyhd2) in end else
+     find uW1 <= qW suchthat defined(wkhd3[uW1],keyhd3[uW1]) && (wkhd = wkhd3[uW1]) && (keyhd1 = keyhd3[uW1]) then end else
+     find uW2 <= qW suchthat defined(wkhd3[uW2],keyhd3[uW2]) && (wkhd = wkhd3[uW2]) && (keyhd2 = keyhd3[uW2]) then end else
+     get keystruct(=keyhd1, ktype1, =true, kr1, =obfuscation) in
+     get Dkeystruct(=keyhd2, ktype2, =true, kr2, =obfuscation) in 
+     if ktype1 = ktype2 then
+     let kr = if b then kr1 else kr2 in 
+     wr <-R wseed;
+     let w2: wrap = wenc(kr,wk,wr) in 
+     let l2: label = wmac(w2,wmk) in
+     return ((w2,l2)).
+ 
+  let testWRAP3= 
+     OT43(keyhd1:handle, keyhd2:handle) :=
+     get Delkey (=keyhd1) in end else
+     get Delkey (=keyhd2) in end else
+     find uW1 <= qW suchthat defined(wkhd3[uW1],keyhd3[uW1]) && (wkhd = wkhd3[uW1]) && (keyhd1 = keyhd3[uW1]) then end else
+     find uW2 <= qW suchthat defined(wkhd3[uW2],keyhd3[uW2]) && (wkhd = wkhd3[uW2]) && (keyhd2 = keyhd3[uW2]) then end else
+     get Dkeystruct(=keyhd1, ktype1, =true, kr1, =obfuscation) in
+     get Dkeystruct(=keyhd2, ktype2, =true, kr2, =obfuscation) in 
+     if ktype1 = ktype2 then
+     let kr = if b then kr1 else kr2 in 
+     wr <-R wseed;
+     let w3: wrap = wenc(kr,wk,wr) in 
+     let l3: label = wmac(w3,wmk) in
+     return ((w3,l3)).
+   
+ let testMAC =
+     OT5 (mkhd2:handle, mm2:macinput, mm2_mac:macres) :=
+     if mkhd2 = mkhd then
+     get keystruct (=mkhd2, =mackey, IsExtr, mks2, =obfuscation) in
+     mk2 <- mkgen(mks2);
+     if symverify(mm2,mk2,mm2_mac) then
+     find uSS <= qSS suchthat defined(mkhd3[uSS],mm3[uSS]) && (mkhd = mkhd3[uSS]) && (mm2 = mm3[uSS]) then end else
+     event forge.
+
+ let testSignature =
+     OT6 (sigkhd2:handle, sm2:signinput, sm2_sign:signature) :=
+     if sigkhd2 = sigkhd then
+     get keystruct(=sigkhd2, =signkey, IsExtr, sks2, =obfuscation) in
+     spk2 <- spkgen(sks2);
+     if asymverify(sm2,spk2,sm2_sign) then
+     find uPS <= qPS suchthat defined(sigkhd3[uPS],sm3[uPS]) && (sigkhd = sigkhd3[uPS]) && (sm2 = sm3[uPS]) then end else
+     event forge.
+
+ process
+     Ogen() :=
+     b <-R bool;
+     obfuscation <-R keyseed;
+     ks <-R keyseed;
+     k <- kgen(ks);
+     khd <-R handle;
+     insert keystruct(khd, symkey, false, ks, obfuscation);
+     pks <-R keyseed;
+     sk <- skgen(pks);
+     pk <- pkgen(pks);
+     skhd <-R handle;
+     insert keystruct(skhd, asymkey, false, pks, obfuscation);
+     wks <-R keyseed;
+     wk <- wkgen(wks);
+     wmks <-R keyseed;
+     wmk <- wmkgen(wmks); 
+     wkhd <-R handle;
+     insert keystruct(wkhd, wrapkey, false, wks, wmks);
+     mks <-R keyseed;
+     mk <- mkgen(mks);
+     mkhd <-R handle;
+     insert keystruct(mkhd, mackey, false, mks, obfuscation);
+     sks <-R keyseed;
+     spk <- spkgen(sks);
+     ssk <- sskgen(sks);
+     sigkhd <-R handle;
+     insert keystruct(sigkhd, signkey, false, sks, obfuscation);
+     ck <-R schemekey;
+     return (pk, khd, skhd, wkhd, mkhd, spk, sigkhd);
+     ( (foreach iA <= N do testKDF) |
+       (foreach iB <= N do testSENC) | 
+       (foreach iC <= N do testPENC) | 
+       (foreach iD <= N do testWRAP1) | (foreach iE <= N do testWRAP2) | (foreach iF <= N do testWRAP3) |
+       (foreach iG <= N do testMAC) |
+       (foreach iH <= N do testSignature) |
+       CreateK | CreateKP | Delete | KDF | SENC | SDEC | PENC | PDEC | WRAP | UNWRAP | SYM_MAC | SYM_VERIFY | ASYM_SIGN | ASYM_VERIFY )
