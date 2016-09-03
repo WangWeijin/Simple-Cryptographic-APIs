@@ -1,18 +1,9 @@
 set interactiveMode = false.
 
  param N.
- param N1.
- param N2.
- param N3.
+ param qC.
  param qCK.
  param qCKP.
- param qK.
- param qKP.
- param qWK.
- param qMK.
- param qSSK.
- param qDel.
- param qD.
  param qSE.
  param qSD.
  param qPE.
@@ -80,11 +71,20 @@ set interactiveMode = false.
  const wrapkey: keytype.
  const mackey: keytype.
  const signkey: keytype.
+ const SRKey: keytype.
+ 
+  (* Storage Primary Seed *)
+ const SPS: keyseed.
+ letfun RNG(sps:keyseed,IV:keyseed) = IV.
 
  (* key handle *)
 
  type handle [fixed,large].
  table keystruct (handle, keytype, bool, keyseed, keyseed).
+ 
+ (* a const used to unify the number of return values in five branches. If not, the compiler will return a failure *)
+ const uni: bitstring.
+ 
 
  (******************************** Semantic security **********************************)
  query secret1 b.
@@ -92,39 +92,20 @@ set interactiveMode = false.
  query event forge ==> false.
 
  (******************************** API query **********************************)
+ 
+ let TPM2_CreatePrimary =
+     foreach iC <= qC do OC(ktype:keytype):=
+     if ktype = SRKey then
+     IV1 <-R keyseed;
+     IV2 <-R keyseed;
+     SRKE <- wkgen(RNG(SPS,IV1));
+     SRKM <- wmkgen(RNG(SPS,IV2));
+     SRKhd <-R handle;
+     insert keystruct(SRKhd, SRKey, false,RNG(SPS,IV1), RNG(SPS,IV2));
+     return (SRKhd).
 
- let CreateK =
+ let TPM2_CreateK =
      foreach iCK <= qCK do OCK(ktype:keytype):=
-     if ktype = symkey then 
-     (
-     ks' <-R keyseed;
-     k' <- kgen(ks'); 
-     khd' <-R handle;
-     insert keystruct(khd', symkey, true, ks', obfuscation);
-     return (khd')
-     ) 
-     else
-     if ktype = wrapkey then 
-     (
-     wks' <-R keyseed;
-     wk' <- wkgen(wks');
-     wmks' <-R keyseed;
-     wmk' <- wmkgen(wmks');
-     wkhd' <-R handle;
-     insert keystruct(wkhd', wrapkey, true, wks', wmks');
-     return (wkhd')
-     )
-     else
-     if ktype = mackey then 
-     (
-     mks' <-R keyseed;
-     mkhd' <-R handle;
-     insert keystruct(mkhd', mackey, true, mks', obfuscation);
-     return(mkhd')
-     ).
-     
- let CreateKP =
-     foreach iCKP <= qCKP do OCKP(ktype:keytype):=
      if ktype = asymkey then 
      (
      pks' <-R keyseed;
@@ -142,29 +123,78 @@ set interactiveMode = false.
      sigkhd' <-R handle;
      insert keystruct(sigkhd', signkey, true, sks', obfuscation);
      return(sigkhd',spk')
+     )
+     else
+     if ktype = symkey then 
+     (
+     ks' <-R keyseed;
+     k' <- kgen(ks'); 
+     khd' <-R handle;
+     insert keystruct(khd', symkey, true, ks', obfuscation);
+     return (khd',uni)
+     ) 
+     else
+     if ktype = wrapkey then 
+     (
+     wks' <-R keyseed;
+     wk' <- wkgen(wks');
+     wmks' <-R keyseed;
+     wmk' <- wmkgen(wmks');
+     wkhd' <-R handle;
+     insert keystruct(wkhd', wrapkey, true, wks', wmks');
+     return (wkhd',uni)
+     )
+     else
+     if ktype = mackey then 
+     (
+     mks' <-R keyseed;
+     mkhd' <-R handle;
+     insert keystruct(mkhd', mackey, true, mks', obfuscation);
+     return(mkhd',uni)
      ).
      
-let CreateWrap=
+let TPM2_CreateWrap=
      foreach iW <= qW do OW(wkhd3:handle, keyhd3:handle):=
-     get keystruct(=wkhd3, =wrapkey, IsExtr, wks3, wmks3) in
+     get keystruct(=wkhd3, =wrapkey, =true, wks3, wmks3) in (
      wk3 <- wkgen(wks3);
      wmk3 <- wmkgen(wmks3);
      wr3 <-R wseed;
      get keystruct(=keyhd3, ktype3, =true, kr3, =obfuscation) in
      w: wrap <- wenc(kr3,wk3,wr3);
      l: label <- wmac(w,wmk3);
-     return((w,l)).
+     return((w,l))
+     )
+     else (
+     get keystruct(=wkhd3, =SRKey, =false, wks3, wmks3) in
+     wk3 <- wkgen(wks3);
+     wmk3 <- wmkgen(wmks3);
+     wr3 <-R wseed;
+     get keystruct(=keyhd3, ktype3, =true, kr3, kr4) in
+     w: wrap <- wenc(kr3,wk3,wr3);
+     l: label <- wmac(w,wmk3);
+     return((w,l))
+     ).
     
  
  let TPM2_Load=
-     foreach iUW <= qUW do OUW(wkhd4:handle, (w':wrap,l':label)):=
-     get keystruct(=wkhd4, =wrapkey, IsExtr, wks4, wmks4) in
-     wk4 <- wkgen(wks4);
-     wmk4 <- wmkgen(wmks4);
-     if wcheck(w', wmk4, l') then
-     let winjbot(kr4) = wdec(w', wk4) in
-     get keystruct(keyhd4, ktype4, =true, =kr4, =obfuscation) in
-     return(keyhd4).
+     foreach iUW <= qUW do OUW(wkhd5:handle, (w':wrap,l':label)):=
+     get keystruct(=wkhd5, =wrapkey, = true, wks5, wmks5) in (
+     wk5 <- wkgen(wks5);
+     wmk5 <- wmkgen(wmks5);
+     if wcheck(w', wmk5, l') then
+     let winjbot(kr5) = wdec(w', wk5) in
+     get keystruct(keyhd5, ktype5, =true, =kr5, =obfuscation) in
+     return(keyhd5)
+     )
+     else (
+     get keystruct(=wkhd5, =SRKey, =false, wks5, wmks5) in
+     wk5 <- wkgen(wks5);
+     wmk5 <- wmkgen(wmks5);
+     if wcheck(w', wmk5, l') then
+     let winjbot(kr5) = wdec(w', wk5) in
+     get keystruct(keyhd5, ktype5, =true, =kr5, kr6) in
+     return(keyhd5)
+     ).
 
 
  let TPM2_Encrypt =
@@ -207,7 +237,6 @@ let CreateWrap=
      get keystruct(=mkhd4, =mackey, IsExtr, mks4, =obfuscation) in
        mk4 <- mkgen(mks4);
        return(symverify(mm4,mk4,mm4_mac)).
-    
 
  let TPM2_Sign =
      foreach iPS <= qPS do OPS(sigkhd3:handle, sm3:signinput):=
@@ -249,16 +278,25 @@ let CreateWrap=
  
  let testCreate =
      OT4(wkhd1:handle, (w1:wrap,l1:label)) :=
-     if wkhd1 = wkhd then
-     get keystruct (=wkhd1, =wrapkey, IsExtr, wks1, wmks1) in
+     if wkhd1 = wkhd then (
+     get keystruct (=wkhd1, =wrapkey, = true, wks1, wmks1) in 
      wk1 <- wkgen(wks1);
      wmk1 <- wmkgen(wmks1);
      if wcheck(w1, wmk1, l1) then
      let winjbot(kr1) = wdec(w1, wk1) in
-     get keystruct(keyhd1, ktype1, =true, =kr1, =obfuscation) in (
+     get keystruct(keyhd1, ktype1, =true, =kr1, =obfuscation) in
      find uW <= qW suchthat defined(wkhd3[uW],keyhd3[uW]) && (wkhd = wkhd3[uW]) && (keyhd1 = keyhd3[uW]) then end else event forge
      )
-     else event forge.
+     else if wkhd1 = srkhd then (
+     get keystruct (=wkhd1, =SRKey, =false, wks1, wmks1) in
+     wk1 <- wkgen(wks1);
+     wmk1 <- wmkgen(wmks1);
+     if wcheck(w1, wmk1, l1) then
+     let winjbot(kr1) = wdec(w1, wk1) in
+     get keystruct(keyhd1, ktype1, =true, =kr1, kr2) in
+     find uW <= qW suchthat defined(wkhd3[uW],keyhd3[uW]) && (srkhd = wkhd3[uW]) && (keyhd1 = keyhd3[uW]) then end else event forge
+     ).
+
 
  let testHMAC =
      OT5 (mkhd2:handle, mm2:macinput, mm2_mac:macres) :=
@@ -282,34 +320,38 @@ let CreateWrap=
      Ogen() :=
      b <-R bool;
      obfuscation <-R keyseed;
+     iv1 <-R keyseed;
+     iv2 <-R keyseed;
+     srkhd <-R handle;
+     insert keystruct(srkhd, SRKey, false, RNG(SPS,iv1), RNG(SPS,iv2));
      ks <-R keyseed;
      k <- kgen(ks);
      khd <-R handle;
-     insert keystruct(khd, symkey, false, ks, obfuscation);
+     insert keystruct(khd, symkey, true, ks, obfuscation);
      pks <-R keyseed;
      sk <- skgen(pks);
      pk <- pkgen(pks);
      skhd <-R handle;
-     insert keystruct(skhd, asymkey, false, pks, obfuscation);
+     insert keystruct(skhd, asymkey, true, pks, obfuscation);
      wks <-R keyseed;
      wk <- wkgen(wks);
      wmks <-R keyseed;
      wmk <- wmkgen(wmks); 
      wkhd <-R handle;
-     insert keystruct(wkhd, wrapkey, false, wks, wmks);
+     insert keystruct(wkhd, wrapkey, true, wks, wmks);
      mks <-R keyseed;
      mk <- mkgen(mks);
      mkhd <-R handle;
-     insert keystruct(mkhd, mackey, false, mks, obfuscation);
+     insert keystruct(mkhd, mackey, true, mks, obfuscation);
      sks <-R keyseed;
      spk <- spkgen(sks);
      ssk <- sskgen(sks);
      sigkhd <-R handle;
-     insert keystruct(sigkhd, signkey, false, sks, obfuscation);
-     return (pk, khd, skhd, wkhd, mkhd, spk, sigkhd);
+     insert keystruct(sigkhd, signkey, true, sks, obfuscation);
+     return (srkhd, khd, pk, skhd, wkhd, mkhd, spk, sigkhd);
      ( (foreach iA <= N do testSENC) | 
        (foreach iB <= N do testPENC) | 
        (foreach iC <= N do testCreate) |
        (foreach iD <= N do testHMAC) |
        (foreach iE <= N do testSignature) |
-       CreateK | CreateKP | CreateWrap | TPM2_Load | TPM2_Encrypt | TPM2_Decrypt | TPM2_RSA_Encrypt | TPM2_RSA_Decrypt | TPM2_HMAC | TPM2_VerifyHMAC | TPM2_Sign | TPM2_VerifySignature )
+       TPM2_CreatePrimary | TPM2_CreateK | TPM2_CreateWrap | TPM2_Load | TPM2_Encrypt | TPM2_Decrypt | TPM2_RSA_Encrypt | TPM2_RSA_Decrypt | TPM2_HMAC | TPM2_VerifyHMAC | TPM2_Sign | TPM2_VerifySignature )
